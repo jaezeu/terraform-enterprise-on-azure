@@ -1,0 +1,65 @@
+# Static checks only — deploys stay local/HCP-TF-driven on purpose:
+# the sandbox does not have Azure credentials, and the cluster layers
+# hinge on live infrastructure that must already exist.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - vm
+          - aks/infra
+          - aks/addons
+          - aks/tfe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@v6.3.0
+        with:
+          tflint_version: v0.63.1
+
+      - name: terraform fmt
+        run: terraform fmt -check -diff
+        working-directory: ${{ matrix.dir }}
+
+      # -backend=false suppresses the HCP Terraform cloud{} block (no token in CI).
+      - name: terraform validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+        working-directory: ${{ matrix.dir }}
+        env:
+          TF_CLOUD_ORGANIZATION: __ci_placeholder__
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --minimum-failure-severity=error
+        working-directory: ${{ matrix.dir }}
+
+  shell:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # error severity only: fail on real breakage, not style nits
+          shellcheck -S error scripts/*.sh
